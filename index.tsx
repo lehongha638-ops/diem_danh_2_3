@@ -3608,9 +3608,6 @@ function App() {
 
   return (
     <>
-      <a href="https://x.com/ammaar" target="_blank" rel="noreferrer" className="creator-credit">
-        created by @ammaar
-      </a>
       <div className="immersive-app">
         <DottedGlowBackground 
           gap={24} 
