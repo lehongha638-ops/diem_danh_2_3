@@ -1,0 +1,8 @@
+{
+  "name": "Điểm danh mới lần 9",
+  "description": "Put Gemini 3 Flash\u0027s creativity and coding abilities to the test. Rapidly generate UI, explore variations, and export code.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "prompt": ""
+}
