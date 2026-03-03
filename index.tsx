@@ -21,6 +21,7 @@ import {
     CheckCircleIcon,
     XCircleIcon,
     BarChartIcon,
+    SettingsIcon,
 } from './components/Icons';
 
 // FIX: Added missing | in type definition
@@ -28,6 +29,15 @@ type Role = 'teacher' | 'parent' | 'student' | 'head_teacher' | 'principal';
 type View = 'landing' | 'role-selection' | Role;
 type AttendanceStatus = 'present' | 'absent_p' | 'absent_np' | 'unrecognized' | 'late';
 type LeaveRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export type AttendanceConfig = {
+    morningStartTime: string;
+    afternoonStartTime: string;
+    customTimes: { id: string; classId: string; period: string; week: string; subject?: string; startTime: string }[];
+    entryMethod: 'day' | 'session';
+    leaveCalculation: 'full-day' | 'aggregate' | 'per-session';
+    isConfigured: boolean;
+};
 
 interface Student {
     id: string;
@@ -643,7 +653,7 @@ const AiTrainingStatusWidget: React.FC = () => {
 };
 
 
-const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; }) => {
+const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases, attendanceConfig }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; attendanceConfig: AttendanceConfig }) => {
     // FIX: Set default tab to 'face-registration' for better workflow
     const [activeTab, setActiveTab] = useState('face-registration');
     
@@ -965,10 +975,12 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                                 )}
                             </div>
 
-                            <div className="session-selector-compact">
-                                <button className={`session-pill ${selectedSession === 'am' ? 'active' : ''}`} onClick={() => setSelectedSession('am')}>Sáng</button>
-                                <button className={`session-pill ${selectedSession === 'pm' ? 'active' : ''}`} onClick={() => setSelectedSession('pm')}>Chiều</button>
-                            </div>
+                            {attendanceConfig.entryMethod === 'session' && (
+                                <div className="session-selector-compact">
+                                    <button className={`session-pill ${selectedSession === 'am' ? 'active' : ''}`} onClick={() => setSelectedSession('am')}>Sáng</button>
+                                    <button className={`session-pill ${selectedSession === 'pm' ? 'active' : ''}`} onClick={() => setSelectedSession('pm')}>Chiều</button>
+                                </div>
+                            )}
                         </div>
 
                         <div className="day-picker-horizontal-compact">
@@ -1259,28 +1271,13 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                             {leaveRequestSubTab === 'pending' && (
                                 <>
                                     {pendingRequests.length > 0 ? (
-                                        <div className="leave-requests-grid">
+                                        <div className="processed-leave-buttons">
                                             {pendingRequests.map(req => (
-                                                <div key={req.id} className="leave-card">
-                                                    <div className="leave-card-header">
-                                                        <div>
-                                                            <p className="student-name">{req.studentName}</p>
-                                                            <p className="parent-name">PH: {req.parentName}</p>
-                                                        </div>
-                                                        <div className="leave-date">
-                                                            <span>Ngày nghỉ: <strong>{formatDate(new Date(req.leaveDate.replace(/-/g, '/')))}</strong></span>
-                                                        </div>
-                                                    </div>
-                                                    <p className="leave-reason">{req.reason}</p>
-                                                    <div className="leave-card-actions">
-                                                        <button className="action-button deny" onClick={() => handleDenyRequest(req.id)}>
-                                                            <XCircleIcon /> Từ chối
-                                                        </button>
-                                                        <button className="action-button primary approve" onClick={() => handleApproveRequest(req.id)}>
-                                                            <CheckCircleIcon /> Duyệt
-                                                        </button>
-                                                    </div>
-                                                </div>
+                                                <button key={req.id} className="processed-leave-btn status-pending" onClick={() => handleOpenLeaveRequestModal(req)}>
+                                                    <span className='student-name'>{req.studentName}</span>
+                                                    <span className='leave-date'>{formatDate(new Date(req.leaveDate.replace(/-/g, '/')), { day: '2-digit', month: '2-digit'})}</span>
+                                                    <span className="status-text">{statusText[req.status]}</span>
+                                                </button>
                                             ))}
                                         </div>
                                     ) : (
@@ -1312,10 +1309,11 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                 );
             }
             case 'reports': {
-                const weekDates = Array.from({ length: 7 }, (_, i) => addDays(getWeekStart(new Date(reportValue.replace(/-/g, '/'))), i));
                 const studentsForReport = reportType === 'day' 
                     ? (currentWeekData[reportValue]?.[reportSession] ?? [])
-                    : weekDates.flatMap(d => currentWeekData[formatDateForID(d)]?.[reportSession] ?? []);
+                    : Object.keys(currentWeekData)
+                        .filter(date => date.startsWith(reportValue.slice(0, 7)))
+                        .flatMap(date => currentWeekData[date]?.[reportSession] ?? []);
                 
                 const stats = {
                     total: studentsForReport.length,
@@ -1353,15 +1351,14 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                         return;
                     }
             
-                    const headers = ['STT', 'Họ và tên', 'Mã HS', 'Trạng thái', 'Ghi chú đi trễ'];
+                    const headers = ['STT', 'Họ và tên', 'Mã HS', 'Trạng thái'];
                     const csvContent = [
                         headers.join(','),
                         ...filteredStudents.map((student, index) => [
                             index + 1,
                             `"${student.name}"`,
                             student.id,
-                            statusOptions[student.status],
-                            student.status === 'late' ? 'Vào lớp muộn 15p' : '-'
+                            statusOptions[student.status]
                         ].join(','))
                     ].join('\n');
             
@@ -1379,57 +1376,26 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                 return (
                     <div className="reports-container">
                         <h2 className="content-title">Báo cáo và Thống kê</h2>
-                        
-                        <div className="week-selection-bar">
-                            <div className="week-selection-left">
-                                <div className="selection-row">
-                                    <span className="selection-label">NĂM</span>
-                                    <select className="selection-select" value={reportYear} onChange={e => setReportYear(e.target.value)}>
-                                        <option value="2025-2026">2025-2026</option>
-                                        <option value="2024-2025">2024-2025</option>
-                                        <option value="2023-2024">2023-2024</option>
-                                    </select>
-                                </div>
-                                <div className="selection-row">
-                                    <span className="selection-label">TUẦN</span>
-                                    <select className="selection-select" value={reportValue} onChange={e => setReportValue(e.target.value)}>
-                                        {/* Generate some weeks for selection */}
-                                        {Array.from({ length: 12 }, (_, i) => {
-                                            const start = addDays(getWeekStart(new Date()), (i - 6) * 7);
-                                            const end = addDays(start, 6);
-                                            const val = formatDateForID(start);
-                                            return (
-                                                <option key={val} value={val}>
-                                                    {formatDate(start, { day: '2-digit', month: '2-digit' })} To {formatDate(end, { day: '2-digit', month: '2-digit' })}
-                                                </option>
-                                            );
-                                        })}
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="week-selection-right">
-                                <div className="day-names-row">
-                                    {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(day => (
-                                        <div key={day} className="day-name-cell">{day}</div>
-                                    ))}
-                                </div>
-                                <div className="day-dates-row">
-                                    {weekDates.map(day => (
-                                        <div key={day.toISOString()} className="day-date-cell">{formatDate(day, { day: '2-digit', month: '2-digit' })}</div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
 
                         <div className="reports-header">
-                             <div className="filter-group">
+                            <div className="filter-group">
                                 <label htmlFor="report-type">Xem theo</label>
                                 <select id="report-type" className="filter-select" value={reportType} onChange={e => setReportType(e.target.value)}>
                                     <option value="day">Ngày</option>
-                                    <option value="week">Tuần</option>
                                     <option value="month">Tháng</option>
                                 </select>
                             </div>
+                            {reportType === 'day' ? (
+                                <div className="filter-group">
+                                    <label>Ngày</label>
+                                    <input type="date" className="filter-input" value={reportValue} onChange={e => setReportValue(e.target.value)} />
+                                </div>
+                            ) : (
+                                <div className="filter-group">
+                                    <label>Tháng</label>
+                                    <input type="month" className="filter-input" value={reportValue.slice(0, 7)} onChange={e => setReportValue(e.target.value + '-01')} />
+                                </div>
+                            )}
                             <div className="filter-group">
                                 <label htmlFor="report-session">Buổi</label>
                                 <select id="report-session" className="filter-select" value={reportSession} onChange={e => setReportSession(e.target.value as any)}>
@@ -1509,7 +1475,6 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                                                     <th>Họ và tên</th>
                                                     <th>Mã HS</th>
                                                     <th>Trạng thái</th>
-                                                    <th>Ghi chú đi trễ</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -1522,11 +1487,6 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                                                             <span className={`status-badge status-${student.status}`}>
                                                                 {statusOptions[student.status]}
                                                             </span>
-                                                        </td>
-                                                        <td>
-                                                            {student.status === 'late' ? (
-                                                                <span className="late-note">Vào lớp muộn 15p</span>
-                                                            ) : '-'}
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -1732,7 +1692,7 @@ const TeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
     );
 };
 
-const ParentView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; }) => {
+const ParentView = ({ onBack, onOpenWorkflow, onOpenTestCases, attendanceConfig }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; attendanceConfig: AttendanceConfig }) => {
     const [activeTab, setActiveTab] = useState('today');
     const [reportType, setReportType] = useState('month');
     const [showAbsentDaysModal, setShowAbsentDaysModal] = useState(false);
@@ -1768,28 +1728,30 @@ const ParentView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =>
                 const pmStatus = getStatus('pm');
                 
                 return <div className="card">
-                    <h3>Trạng thái điểm danh hôm nay ({studentName})</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
-                        <div className="session-status-box" style={{ padding: '16px', border: '1px solid var(--border-color)', borderRadius: '12px', textAlign: 'center' }}>
-                            <h4 style={{ marginBottom: '12px', color: 'var(--text-secondary)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Buổi Sáng</h4>
+                    <h3>Trạng thái điểm danh hôm nay ({formatDate(today)}) - {studentName}</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: attendanceConfig.entryMethod === 'session' ? '1fr 1fr' : '1fr', gap: '16px', marginTop: '16px' }}>
+                        <div className="session-status-box" style={{ padding: '16px', border: '1px solid var(--border-color)', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f0f7ff', borderColor: '#cce4ff' }}>
+                            <h4 style={{ marginBottom: '12px', color: '#0056b3', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{attendanceConfig.entryMethod === 'session' ? 'Buổi Sáng' : 'Hôm nay'}</h4>
                             {amStatus ? (
-                                <p className={`status-badge status-${amStatus.status}`} style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block' }}>
+                                <p className={`status-badge status-${amStatus.status}`} style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block', backgroundColor: amStatus.status === 'present' ? '#007bff' : undefined, color: amStatus.status === 'present' ? 'white' : undefined }}>
                                     {statusOptions[amStatus.status]}
                                 </p>
                             ) : (
                                 <p className="status-badge status-unrecognized" style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block' }}>Chưa có dữ liệu</p>
                             )}
                         </div>
-                        <div className="session-status-box" style={{ padding: '16px', border: '1px solid var(--border-color)', borderRadius: '12px', textAlign: 'center' }}>
-                            <h4 style={{ marginBottom: '12px', color: 'var(--text-secondary)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Buổi Chiều</h4>
-                            {pmStatus ? (
-                                <p className={`status-badge status-${pmStatus.status}`} style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block' }}>
-                                    {statusOptions[pmStatus.status]}
-                                </p>
-                            ) : (
-                                <p className="status-badge status-unrecognized" style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block' }}>Chưa có dữ liệu</p>
-                            )}
-                        </div>
+                        {attendanceConfig.entryMethod === 'session' && (
+                            <div className="session-status-box" style={{ padding: '16px', border: '1px solid var(--border-color)', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f0f7ff', borderColor: '#cce4ff' }}>
+                                <h4 style={{ marginBottom: '12px', color: '#0056b3', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Buổi Chiều</h4>
+                                {pmStatus ? (
+                                    <p className={`status-badge status-${pmStatus.status}`} style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block', backgroundColor: pmStatus.status === 'present' ? '#007bff' : undefined, color: pmStatus.status === 'present' ? 'white' : undefined }}>
+                                        {statusOptions[pmStatus.status]}
+                                    </p>
+                                ) : (
+                                    <p className="status-badge status-unrecognized" style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block' }}>Chưa có dữ liệu</p>
+                                )}
+                            </div>
+                        )}
                     </div>
                     <p style={{ marginTop: '24px' }}><strong>Ghi chú từ giáo viên:</strong> Không có.</p>
                 </div>;
@@ -2034,7 +1996,7 @@ const ParentView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =>
     );
 };
 
-const StudentView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; }) => {
+const StudentView = ({ onBack, onOpenWorkflow, onOpenTestCases, attendanceConfig }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; attendanceConfig: AttendanceConfig }) => {
     const [activeTab, setActiveTab] = useState('today');
     const [reportType, setReportType] = useState('month');
 
@@ -2063,14 +2025,19 @@ const StudentView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () =
                 }
                 
                 return <div className="card">
-                    <h3>Trạng thái điểm danh hôm nay của bạn</h3>
-                    {studentTodayStatus ? (
-                         <p className={`status-highlight status-${studentTodayStatus.status}`}>
-                            {statusOptions[studentTodayStatus.status]}
-                        </p>
-                    ) : (
-                        <p className="status-highlight status-unrecognized">Chưa có dữ liệu</p>
-                    )}
+                    <h3>Trạng thái điểm danh hôm nay ({formatDate(today)}) của bạn</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginTop: '16px' }}>
+                        <div className="session-status-box" style={{ padding: '16px', border: '1px solid var(--border-color)', borderRadius: '12px', textAlign: 'center', backgroundColor: '#f0f7ff', borderColor: '#cce4ff' }}>
+                            <h4 style={{ marginBottom: '12px', color: '#0056b3', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{attendanceConfig.entryMethod === 'session' ? `Buổi ${session === 'am' ? 'Sáng' : 'Chiều'}` : 'Hôm nay'}</h4>
+                            {studentTodayStatus ? (
+                                <p className={`status-badge status-${studentTodayStatus.status}`} style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block', backgroundColor: studentTodayStatus.status === 'present' ? '#007bff' : undefined, color: studentTodayStatus.status === 'present' ? 'white' : undefined }}>
+                                    {statusOptions[studentTodayStatus.status]}
+                                </p>
+                            ) : (
+                                <p className="status-badge status-unrecognized" style={{ fontSize: '1rem', padding: '8px 16px', display: 'inline-block' }}>Chưa có dữ liệu</p>
+                            )}
+                        </div>
+                    </div>
                 </div>;
             }
             case 'notifications': {
@@ -2656,7 +2623,7 @@ const SchoolWideReportView = ({ title, data, hideDrillDown = false }: { title: s
                 </div>
             </div>
 
-            <div className="report-main-grid">
+            <div className={`report-main-grid ${hideDrillDown ? 'single-column' : ''}`}>
                 <div className="card chart-card">
                     <h3>Biểu đồ chuyên cần</h3>
                     <div className="horizontal-chart">
@@ -2674,49 +2641,51 @@ const SchoolWideReportView = ({ title, data, hideDrillDown = false }: { title: s
                         ))}
                     </div>
                 </div>
-                <div className="card table-card">
-                    <h3>Thống kê chi tiết</h3>
-                    <div className="table-wrapper-scroll">
-                        <table className="report-table">
-                            <thead>
-                                <tr>
-                                    <th>Khối/Lớp</th>
-                                    <th>Tỉ lệ chuyên cần</th>
-                                    <th>Sĩ số</th>
-                                    <th>Vắng</th>
-                                    <th>Đi muộn</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {dataForDisplay.map(item => (
-                                    <tr 
-                                      key={item.id}
-                                      onClick={() => !hideDrillDown && handleDrillDown(item)}
-                                      className={!hideDrillDown && item.classes && item.classes.length > 0 ? 'drill-down' : ''}
-                                    >
-                                        <td>
-                                            <div className="drill-down-cell">
-                                                <span>{item.name}</span>
-                                                {!hideDrillDown && item.classes && item.classes.length > 0 && <ChevronRightIcon />}
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div className="progress-bar-cell">
-                                                <span>{item.attendanceRate}%</span>
-                                                <div className="progress-bar-container">
-                                                    <div className="progress-bar-fill" style={{ width: `${item.attendanceRate}%` }}></div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td>{item.totalStudents}</td>
-                                        <td>{item.absent}</td>
-                                        <td>{item.late}</td>
+                {!hideDrillDown && (
+                    <div className="card table-card">
+                        <h3>Thống kê chi tiết</h3>
+                        <div className="table-wrapper-scroll">
+                            <table className="report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Khối/Lớp</th>
+                                        <th>Tỉ lệ chuyên cần</th>
+                                        <th>Sĩ số</th>
+                                        <th>Vắng</th>
+                                        <th>Đi muộn</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    {dataForDisplay.map(item => (
+                                        <tr 
+                                          key={item.id}
+                                          onClick={() => !hideDrillDown && handleDrillDown(item)}
+                                          className={!hideDrillDown && item.classes && item.classes.length > 0 ? 'drill-down' : ''}
+                                        >
+                                            <td>
+                                                <div className="drill-down-cell">
+                                                    <span>{item.name}</span>
+                                                    {!hideDrillDown && item.classes && item.classes.length > 0 && <ChevronRightIcon />}
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div className="progress-bar-cell">
+                                                    <span>{item.attendanceRate}%</span>
+                                                    <div className="progress-bar-container">
+                                                        <div className="progress-bar-fill" style={{ width: `${item.attendanceRate}%` }}></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td>{item.totalStudents}</td>
+                                            <td>{item.absent}</td>
+                                            <td>{item.late}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
         </div>
         <Modal
@@ -2901,28 +2870,13 @@ const HeadTeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: 
                     <div className="leave-approval-container">
                         <h3>Đơn nghỉ chờ duyệt ({pendingRequests.length})</h3>
                          {pendingRequests.length > 0 ? (
-                            <div className="leave-requests-grid">
+                            <div className="processed-leave-buttons">
                                 {pendingRequests.map(req => (
-                                    <div key={req.id} className="leave-card">
-                                        <div className="leave-card-header">
-                                            <div>
-                                                <p className="student-name">{req.studentName} (Lớp 10A1)</p>
-                                                <p className="parent-name">PH: {req.parentName}</p>
-                                            </div>
-                                            <div className="leave-date">
-                                                <span>Ngày nghỉ: <strong>{formatDate(new Date(req.leaveDate.replace(/-/g, '/')))}</strong></span>
-                                            </div>
-                                        </div>
-                                        <p className="leave-reason">{req.reason}</p>
-                                        <div className="leave-card-actions">
-                                            <button className="action-button deny" onClick={() => handleDenyRequest(req.id)}>
-                                                <XCircleIcon /> Từ chối
-                                            </button>
-                                            <button className="action-button primary approve" onClick={() => handleApproveRequest(req.id)}>
-                                                <CheckCircleIcon /> Duyệt
-                                            </button>
-                                        </div>
-                                    </div>
+                                    <button key={req.id} className="processed-leave-btn status-pending" onClick={() => handleOpenLeaveRequestModal(req)}>
+                                        <span className='student-name'>{req.studentName} (Lớp 10A1)</span>
+                                        <span className='leave-date'>{formatDate(new Date(req.leaveDate.replace(/-/g, '/')), { day: '2-digit', month: '2-digit'})}</span>
+                                        <span className="status-text">Chờ duyệt</span>
+                                    </button>
                                 ))}
                             </div>
                         ) : (
@@ -2969,6 +2923,47 @@ const HeadTeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: 
                 </div>
             </Modal>
             <Modal
+                isOpen={isLeaveRequestModalOpen}
+                onClose={handleCloseLeaveRequestModal}
+                title="Chi tiết Đơn xin nghỉ"
+                footer={<>
+                    {selectedLeaveRequest?.status === 'pending' && (
+                        <>
+                            <button className="action-button deny" onClick={() => { if(selectedLeaveRequest) { handleDenyRequest(selectedLeaveRequest.id); handleCloseLeaveRequestModal(); }}}>
+                                <XCircleIcon /> Từ chối
+                            </button>
+                            <button className="action-button primary approve" onClick={() => { if(selectedLeaveRequest) { handleApproveRequest(selectedLeaveRequest.id); handleCloseLeaveRequestModal(); }}}>
+                                <CheckCircleIcon /> Duyệt
+                            </button>
+                        </>
+                    )}
+                    <button className="action-button" onClick={handleCloseLeaveRequestModal}>
+                       {selectedLeaveRequest?.status === 'pending' ? 'Để sau' : 'Đóng'}
+                    </button>
+                </>}
+            >
+                {selectedLeaveRequest && (
+                    <div className="leave-request-details">
+                        <div className="detail-item">
+                            <span className="detail-label">Học sinh:</span>
+                            <span className="detail-value">{selectedLeaveRequest.studentName}</span>
+                        </div>
+                        <div className="detail-item">
+                            <span className="detail-label">Phụ huynh:</span>
+                            <span className="detail-value">{selectedLeaveRequest.parentName}</span>
+                        </div>
+                        <div className="detail-item">
+                            <span className="detail-label">Ngày nghỉ:</span>
+                            <span className="detail-value">{formatDate(new Date(selectedLeaveRequest.leaveDate.replace(/-/g, '/')))}</span>
+                        </div>
+                         <div className="detail-item">
+                            <span className="detail-label">Lý do:</span>
+                            <span className="detail-value">{selectedLeaveRequest.reason}</span>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+            <Modal
                 isOpen={showSuccessModal}
                 onClose={() => setShowSuccessModal(false)}
                 title="Thông báo"
@@ -2980,14 +2975,33 @@ const HeadTeacherView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: 
     );
 };
 
-const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; }) => {
-    const [activeTab, setActiveTab] = useState('overview');
+const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases, attendanceConfig, setAttendanceConfig }: { onBack: () => void; onOpenWorkflow: () => void; onOpenTestCases: () => void; attendanceConfig: AttendanceConfig; setAttendanceConfig: React.Dispatch<React.SetStateAction<AttendanceConfig>> }) => {
+    const [activeTab, setActiveTab] = useState(attendanceConfig.isConfigured ? 'overview' : 'config');
     const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(mockLeaveRequestsData);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
+    const [isAddingCustomTime, setIsAddingCustomTime] = useState(false);
+    const [newCustomTime, setNewCustomTime] = useState({ classId: '', subject: '', period: '', week: '', startTime: '' });
+
+    React.useEffect(() => {
+        if (!attendanceConfig.isConfigured && activeTab !== 'config') {
+            setActiveTab('config');
+        }
+    }, [attendanceConfig.isConfigured, activeTab]);
+
+    const handleTabChange = (tab: string) => {
+        if (!attendanceConfig.isConfigured && tab !== 'config') {
+            alert('Vui lòng hoàn tất khai báo cấu hình trước khi sử dụng các chức năng khác.');
+            return;
+        }
+        setActiveTab(tab);
+    };
 
     const [leaveFilterPeriod, setLeaveFilterPeriod] = useState<'day' | 'month' | 'year'>('month');
     const [leaveFilterValue, setLeaveFilterValue] = useState(() => new Date().toISOString().slice(0, 7));
+
+    const [detailedStatsGradeFilter, setDetailedStatsGradeFilter] = useState('Tất cả');
+    const [detailedStatsTimeFilter, setDetailedStatsTimeFilter] = useState('Tháng này');
 
     // Detail modal for stats
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -2999,47 +3013,6 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
     const [isRejectionModalOpen, setIsRejectionModalOpen] = useState(false);
     const [rejectionReason, setRejectionReason] = useState('');
     const [requestToReject, setRequestToReject] = useState<string | null>(null);
-
-     // Time setup state
-    const initialClassTimes: ClassTimeSettings = { am: '07:30', pm: '13:30' };
-    const initialLessonPeriods: LessonPeriodSettings = {
-        am: [
-            { start: '07:45', end: '08:30' },
-            { start: '08:40', end: '09:25' },
-            { start: '09:35', end: '10:20' },
-            { start: '10:30', end: '11:15' },
-            { start: '11:25', end: '12:10' },
-        ],
-        pm: [
-            { start: '13:45', end: '14:30' },
-            { start: '14:40', end: '15:25' },
-            { start: '15:35', end: '16:20' },
-            { start: '16:30', end: '17:15' },
-            { start: '17:25', end: '18:10' },
-        ],
-    };
-
-    const [classTimes, setClassTimes] = useState<ClassTimeSettings>(initialClassTimes);
-    const [lessonPeriods, setLessonPeriods] = useState<LessonPeriodSettings>(initialLessonPeriods);
-    
-    // Handler for class time changes
-    const handleClassTimeChange = (session: 'am' | 'pm', value: string) => {
-        setClassTimes(prev => ({ ...prev, [session]: value }));
-    };
-
-    // Handler for lesson period changes
-    const handlePeriodChange = (session: 'am' | 'pm', index: number, type: 'start' | 'end', value: string) => {
-        setLessonPeriods(prev => {
-            const newPeriods = [...prev[session]];
-            newPeriods[index] = { ...newPeriods[index], [type]: value };
-            return { ...prev, [session]: newPeriods };
-        });
-    };
-
-    const handleSaveTimeSettings = () => {
-        setSuccessMessage('Đã lưu thiết lập thời gian thành công.');
-        setShowSuccessModal(true);
-    };
     
     const handleDenyRequest = (id: string) => {
         setRequestToReject(id);
@@ -3073,33 +3046,45 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
         const className = cls.name.replace('Lớp ', '');
         const studentsInClass = mockStudentsData.filter(s => s.className === className);
         
-        const studentAttendanceData = studentsInClass.map((s, idx) => ({
-            stt: idx + 1,
-            name: s.name,
-            attendanceRate: (95 + Math.random() * 5).toFixed(1) + '%',
-            absent: Math.floor(Math.random() * 3),
-            late: Math.floor(Math.random() * 2),
-        }));
+        const studentAttendanceData = studentsInClass.map((s, idx) => {
+            const absentP = Math.floor(Math.random() * 2);
+            const absentNp = Math.floor(Math.random() * 2);
+            const totalAbsent = absentP + absentNp;
+            const absentStr = totalAbsent > 0 ? `${absentP} CP / ${absentNp} KP` : '';
+            const late = Math.floor(Math.random() * 2);
+            
+            return {
+                stt: idx + 1,
+                name: s.name,
+                month: (90 + Math.random() * 10).toFixed(1) + '%',
+                semester: (92 + Math.random() * 8).toFixed(1) + '%',
+                year: (94 + Math.random() * 6).toFixed(1) + '%',
+                absent: absentStr,
+                late: late > 0 ? late : '',
+            };
+        });
 
         setModalData(studentAttendanceData);
         setModalColumns([
             { key: 'stt', label: 'STT' },
-            { key: 'name', label: 'Họ tên' },
-            { key: 'attendanceRate', label: 'Tỉ lệ chuyên cần' },
-            { key: 'absent', label: 'Vắng' },
-            { key: 'late', label: 'Đi muộn' },
+            { key: 'name', label: 'Họ và tên' },
+            { key: 'month', label: 'Tháng' },
+            { key: 'semester', label: 'Học kỳ' },
+            { key: 'year', label: 'Cả năm' },
+            { key: 'absent', label: 'Vắng (CP/KP)' },
+            { key: 'late', label: 'Đi trễ' },
         ]);
         setIsDetailModalOpen(true);
     };
 
 
     const menu = {
+        'config': { label: 'Khai báo cấu hình', icon: <SettingsIcon /> },
         'overview': { label: 'Báo cáo tổng quan', icon: <BuildingIcon /> },
         'detailed-stats': { label: 'Thống kê chi tiết', icon: <BarChartIcon /> },
         'recognition-history': { label: 'Lịch sử nhận diện AI', icon: <FaceIdIcon /> },
         'leave-requests': { label: 'Tình hình đơn nghỉ', icon: <MailIcon /> },
         'leave-history': { label: 'Lịch sử duyệt đơn', icon: <HistoryIcon /> },
-        'time-setup': { label: 'Thiết lập Thời gian', icon: <ClockIcon /> },
     };
     
     const mockClassDataForGrade10: ReportData[] = Array.from({ length: 8 }, (_, i) => {
@@ -3142,6 +3127,10 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
     };
 
     const allSchoolClasses = getAllClasses(mockSchoolData);
+    const filteredSchoolClasses = allSchoolClasses.filter(cls => {
+        if (detailedStatsGradeFilter === 'Tất cả') return true;
+        return cls.name.includes(detailedStatsGradeFilter);
+    });
     const topClasses = [...allSchoolClasses].sort((a, b) => b.attendanceRate - a.attendanceRate).slice(0, 5);
     const bottomClasses = [...allSchoolClasses].sort((a, b) => a.attendanceRate - b.attendanceRate).slice(0, 5);
 
@@ -3188,20 +3177,20 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
                             <div className="filter-controls">
                                 <div className="filter-group">
                                     <label>Khối</label>
-                                    <select className="filter-select">
-                                        <option>Tất cả</option>
-                                        <option>Khối 10</option>
-                                        <option>Khối 11</option>
-                                        <option>Khối 12</option>
+                                    <select className="filter-select" value={detailedStatsGradeFilter} onChange={e => setDetailedStatsGradeFilter(e.target.value)}>
+                                        <option value="Tất cả">Tất cả</option>
+                                        <option value="Khối 10">Khối 10</option>
+                                        <option value="Khối 11">Khối 11</option>
+                                        <option value="Khối 12">Khối 12</option>
                                     </select>
                                 </div>
                                 <div className="filter-group">
                                     <label>Thời gian</label>
-                                    <select className="filter-select">
-                                        <option>Tháng này</option>
-                                        <option>Học kỳ I</option>
-                                        <option>Học kỳ II</option>
-                                        <option>Cả năm</option>
+                                    <select className="filter-select" value={detailedStatsTimeFilter} onChange={e => setDetailedStatsTimeFilter(e.target.value)}>
+                                        <option value="Tháng này">Tháng này</option>
+                                        <option value="Học kỳ I">Học kỳ I</option>
+                                        <option value="Học kỳ II">Học kỳ II</option>
+                                        <option value="Cả năm">Cả năm</option>
                                     </select>
                                 </div>
                                 <button className="export-button">
@@ -3224,7 +3213,7 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {allSchoolClasses.map((cls, index) => (
+                                    {filteredSchoolClasses.map((cls, index) => (
                                         <tr key={cls.id} onClick={() => handleViewClassDetail(cls)} className="drill-down">
                                             <td>{index + 1}</td>
                                             <td>
@@ -3318,6 +3307,177 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
                         </div>
                     </div>
                 );
+            case 'config':
+                return (
+                    <div className="config-container">
+                        {!attendanceConfig.isConfigured && (
+                            <div className="info-message warning" style={{ marginBottom: '20px' }}>
+                                <InfoIcon />
+                                <span>Vui lòng hoàn tất khai báo cấu hình để sử dụng các chức năng khác.</span>
+                            </div>
+                        )}
+                        
+                        <div className="card" style={{ borderTop: '4px solid #3b82f6', marginBottom: '20px' }}>
+                            <div className="card-header-with-filters">
+                                <h3 className="content-title" style={{ color: '#1e3a8a' }}>1. Khai báo thời gian vào lớp</h3>
+                            </div>
+                            <div className="form-group" style={{ marginTop: '20px' }}>
+                                <div style={{ display: 'flex', gap: '30px', marginBottom: '25px' }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <label style={{ fontSize: '0.85rem', color: '#1e40af', display: 'block', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Buổi sáng</label>
+                                        <input type="time" className="filter-input" value={attendanceConfig.morningStartTime} onChange={(e) => setAttendanceConfig({ ...attendanceConfig, morningStartTime: e.target.value })} style={{ width: '100%', borderColor: '#bfdbfe', minWidth: 0 }} />
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <label style={{ fontSize: '0.85rem', color: '#1e40af', display: 'block', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Buổi chiều</label>
+                                        <input type="time" className="filter-input" value={attendanceConfig.afternoonStartTime} onChange={(e) => setAttendanceConfig({ ...attendanceConfig, afternoonStartTime: e.target.value })} style={{ width: '100%', borderColor: '#bfdbfe', minWidth: 0 }} />
+                                    </div>
+                                    <div style={{ flex: 2, minWidth: 0 }}></div> {/* Empty space to keep inputs from stretching too much */}
+                                </div>
+                                <div style={{ padding: '20px', backgroundColor: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                        <h4 style={{ margin: 0, fontSize: '1rem', color: '#1e40af' }}>Cấu hình giờ riêng</h4>
+                                        {!isAddingCustomTime && (
+                                            <button className="action-button primary" style={{ backgroundColor: '#2563eb' }} onClick={() => {
+                                                setIsAddingCustomTime(true);
+                                            }}>+ Thêm cấu hình</button>
+                                        )}
+                                    </div>
+                                    <p style={{ fontSize: '0.85rem', color: '#3b82f6', marginBottom: '15px' }}>Cho phép chọn lớp học/tiết/tuần học để điểm danh cho các tiết học không cố định.</p>
+                                    
+                                    {/* Danh sách các cấu hình đã lưu */}
+                                    {attendanceConfig.customTimes.map((customTime) => (
+                                        <div key={customTime.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '12px 15px', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '10px' }}>
+                                            <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                                <span style={{ fontWeight: 600, color: '#1e3a8a' }}>Lớp {customTime.classId || '...'}</span>
+                                                <span style={{ color: '#475569' }}>• Tiết {customTime.period || '...'}</span>
+                                                <span style={{ color: '#475569' }}>• Tuần {customTime.week || '...'}</span>
+                                                {customTime.subject && <span style={{ color: '#475569' }}>• Môn {customTime.subject}</span>}
+                                                <span style={{ fontWeight: 600, color: '#2563eb' }}>• {customTime.startTime || '--:--'}</span>
+                                            </div>
+                                            <button className="action-button" style={{ color: '#ef4444', borderColor: '#ef4444', backgroundColor: '#fef2f2', padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => {
+                                                const newCustomTimes = attendanceConfig.customTimes.filter(ct => ct.id !== customTime.id);
+                                                setAttendanceConfig({ ...attendanceConfig, customTimes: newCustomTimes });
+                                            }}>Xóa</button>
+                                        </div>
+                                    ))}
+
+                                    {/* Form thêm cấu hình mới */}
+                                    {isAddingCustomTime && (
+                                        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '10px' }}>
+                                            <div style={{ display: 'flex', gap: '15px', alignItems: 'flex-end', marginBottom: '15px', flexWrap: 'wrap' }}>
+                                                <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+                                                    <label style={{ fontSize: '0.85rem', color: '#1e40af', display: 'block', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Lớp học</label>
+                                                    <select className="filter-select" value={newCustomTime.classId} onChange={(e) => setNewCustomTime({ ...newCustomTime, classId: e.target.value })} style={{ width: '100%', borderColor: '#bfdbfe', minWidth: 0 }}>
+                                                        <option value="">Chọn lớp</option>
+                                                        <option value="10A1">10A1</option>
+                                                        <option value="10A2">10A2</option>
+                                                        <option value="11A1">11A1</option>
+                                                    </select>
+                                                </div>
+                                                <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+                                                    <label style={{ fontSize: '0.85rem', color: '#1e40af', display: 'block', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Tiết học</label>
+                                                    <select className="filter-select" value={newCustomTime.period} onChange={(e) => setNewCustomTime({ ...newCustomTime, period: e.target.value })} style={{ width: '100%', borderColor: '#bfdbfe', minWidth: 0 }}>
+                                                        <option value="">Chọn tiết</option>
+                                                        <option value="1">Tiết 1</option>
+                                                        <option value="2">Tiết 2</option>
+                                                        <option value="3">Tiết 3</option>
+                                                    </select>
+                                                </div>
+                                                <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+                                                    <label style={{ fontSize: '0.85rem', color: '#1e40af', display: 'block', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Tuần học</label>
+                                                    <select className="filter-select" value={newCustomTime.week} onChange={(e) => setNewCustomTime({ ...newCustomTime, week: e.target.value })} style={{ width: '100%', borderColor: '#bfdbfe', minWidth: 0 }}>
+                                                        <option value="">Chọn tuần</option>
+                                                        <option value="1">Tuần 1</option>
+                                                        <option value="2">Tuần 2</option>
+                                                        <option value="3">Tuần 3</option>
+                                                    </select>
+                                                </div>
+                                                <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+                                                    <label style={{ fontSize: '0.85rem', color: '#1e40af', display: 'block', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Tên môn</label>
+                                                    <input type="text" className="filter-input" placeholder="Nhập tên môn" value={newCustomTime.subject} onChange={(e) => setNewCustomTime({ ...newCustomTime, subject: e.target.value })} style={{ width: '100%', borderColor: '#bfdbfe', minWidth: 0 }} />
+                                                </div>
+                                                <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+                                                    <label style={{ fontSize: '0.85rem', color: '#1e40af', display: 'block', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Giờ vào lớp</label>
+                                                    <input type="time" className="filter-input" value={newCustomTime.startTime} onChange={(e) => setNewCustomTime({ ...newCustomTime, startTime: e.target.value })} style={{ width: '100%', borderColor: '#bfdbfe', minWidth: 0 }} />
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                                                <button className="action-button" style={{ color: '#64748b', borderColor: '#cbd5e1', backgroundColor: '#f8fafc', whiteSpace: 'nowrap', minWidth: '80px' }} onClick={() => {
+                                                    setIsAddingCustomTime(false);
+                                                    setNewCustomTime({ classId: '', subject: '', period: '', week: '', startTime: '' });
+                                                }}>Hủy</button>
+                                                <button className="action-button primary" style={{ backgroundColor: '#10b981', borderColor: '#10b981', minWidth: '80px' }} onClick={() => {
+                                                    if (!newCustomTime.classId || !newCustomTime.period || !newCustomTime.week || !newCustomTime.startTime) {
+                                                        alert('Vui lòng điền đầy đủ thông tin bắt buộc (Lớp, Tiết, Tuần, Giờ).');
+                                                        return;
+                                                    }
+                                                    setAttendanceConfig({
+                                                        ...attendanceConfig,
+                                                        customTimes: [...attendanceConfig.customTimes, { id: Date.now().toString(), ...newCustomTime }]
+                                                    });
+                                                    setIsAddingCustomTime(false);
+                                                    setNewCustomTime({ classId: '', subject: '', period: '', week: '', startTime: '' });
+                                                    setSuccessMessage('Đã lưu cấu hình giờ riêng thành công.');
+                                                    setShowSuccessModal(true);
+                                                }}>Lưu</button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {attendanceConfig.customTimes.length === 0 && !isAddingCustomTime && <p style={{ fontSize: '0.9rem', color: '#60a5fa', fontStyle: 'italic' }}>Chưa có cấu hình giờ riêng nào.</p>}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="card" style={{ borderTop: '4px solid #3b82f6', marginBottom: '20px' }}>
+                            <div className="card-header-with-filters">
+                                <h3 className="content-title" style={{ color: '#1e3a8a' }}>2. Chọn cách nhập chuyên cần</h3>
+                            </div>
+                            <div className="form-group" style={{ marginTop: '20px' }}>
+                                <div style={{ display: 'flex', gap: '30px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '15px 20px', backgroundColor: attendanceConfig.entryMethod === 'day' ? '#eff6ff' : 'white', border: `1px solid ${attendanceConfig.entryMethod === 'day' ? '#3b82f6' : '#e2e8f0'}`, borderRadius: '8px', flex: 1 }}>
+                                        <input type="radio" name="entryMethod" value="day" checked={attendanceConfig.entryMethod === 'day'} onChange={() => setAttendanceConfig({ ...attendanceConfig, entryMethod: 'day' })} style={{ width: '18px', height: '18px', accentColor: '#2563eb' }} />
+                                        <span style={{ color: attendanceConfig.entryMethod === 'day' ? '#1e40af' : '#475569', fontWeight: attendanceConfig.entryMethod === 'day' ? 600 : 400 }}>Tính chuyên cần theo ngày</span>
+                                    </label>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '15px 20px', backgroundColor: attendanceConfig.entryMethod === 'session' ? '#eff6ff' : 'white', border: `1px solid ${attendanceConfig.entryMethod === 'session' ? '#3b82f6' : '#e2e8f0'}`, borderRadius: '8px', flex: 1 }}>
+                                        <input type="radio" name="entryMethod" value="session" checked={attendanceConfig.entryMethod === 'session'} onChange={() => setAttendanceConfig({ ...attendanceConfig, entryMethod: 'session' })} style={{ width: '18px', height: '18px', accentColor: '#2563eb' }} />
+                                        <span style={{ color: attendanceConfig.entryMethod === 'session' ? '#1e40af' : '#475569', fontWeight: attendanceConfig.entryMethod === 'session' ? 600 : 400 }}>Tính chuyên cần theo buổi</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="card" style={{ borderTop: '4px solid #3b82f6', marginBottom: '20px' }}>
+                            <div className="card-header-with-filters">
+                                <h3 className="content-title" style={{ color: '#1e3a8a' }}>3. Cách tính ngày nghỉ chuyên cần</h3>
+                            </div>
+                            <div className="form-group" style={{ marginTop: '20px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '15px 20px', backgroundColor: attendanceConfig.leaveCalculation === 'full-day' ? '#eff6ff' : 'white', border: `1px solid ${attendanceConfig.leaveCalculation === 'full-day' ? '#3b82f6' : '#e2e8f0'}`, borderRadius: '8px' }}>
+                                        <input type="radio" name="leaveCalculation" value="full-day" checked={attendanceConfig.leaveCalculation === 'full-day'} onChange={() => setAttendanceConfig({ ...attendanceConfig, leaveCalculation: 'full-day' })} style={{ width: '18px', height: '18px', accentColor: '#2563eb' }} />
+                                        <span style={{ color: attendanceConfig.leaveCalculation === 'full-day' ? '#1e40af' : '#475569', fontWeight: attendanceConfig.leaveCalculation === 'full-day' ? 600 : 400 }}>Chỉ tính buổi nghỉ cả ngày</span>
+                                    </label>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '15px 20px', backgroundColor: attendanceConfig.leaveCalculation === 'aggregate' ? '#eff6ff' : 'white', border: `1px solid ${attendanceConfig.leaveCalculation === 'aggregate' ? '#3b82f6' : '#e2e8f0'}`, borderRadius: '8px' }}>
+                                        <input type="radio" name="leaveCalculation" value="aggregate" checked={attendanceConfig.leaveCalculation === 'aggregate'} onChange={() => setAttendanceConfig({ ...attendanceConfig, leaveCalculation: 'aggregate' })} style={{ width: '18px', height: '18px', accentColor: '#2563eb' }} />
+                                        <span style={{ color: attendanceConfig.leaveCalculation === 'aggregate' ? '#1e40af' : '#475569', fontWeight: attendanceConfig.leaveCalculation === 'aggregate' ? 600 : 400 }}>Tính gộp các buổi nghỉ</span>
+                                    </label>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '15px 20px', backgroundColor: attendanceConfig.leaveCalculation === 'per-session' ? '#eff6ff' : 'white', border: `1px solid ${attendanceConfig.leaveCalculation === 'per-session' ? '#3b82f6' : '#e2e8f0'}`, borderRadius: '8px' }}>
+                                        <input type="radio" name="leaveCalculation" value="per-session" checked={attendanceConfig.leaveCalculation === 'per-session'} onChange={() => setAttendanceConfig({ ...attendanceConfig, leaveCalculation: 'per-session' })} style={{ width: '18px', height: '18px', accentColor: '#2563eb' }} />
+                                        <span style={{ color: attendanceConfig.leaveCalculation === 'per-session' ? '#1e40af' : '#475569', fontWeight: attendanceConfig.leaveCalculation === 'per-session' ? 600 : 400 }}>Tính theo từng buổi nghỉ</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+                            <button className="action-button primary" style={{ backgroundColor: '#2563eb', padding: '12px 24px', fontSize: '1rem' }} onClick={() => {
+                                setAttendanceConfig({ ...attendanceConfig, isConfigured: true });
+                                setSuccessMessage('Đã lưu cấu hình thành công.');
+                                setShowSuccessModal(true);
+                            }}>Lưu cấu hình</button>
+                        </div>
+                    </div>
+                );
             case 'leave-history':
                 const processedRequests = leaveRequests.filter(r => r.status !== 'pending');
                 return (
@@ -3355,88 +3515,6 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
                         )}
                     </div>
                 );
-            case 'time-setup': {
-                return (
-                    <div className="time-setup-container">
-                        <div className="time-setup-header">
-                            <h2 className="content-title">Thiết lập Thời gian</h2>
-                            <button className="action-button primary" onClick={handleSaveTimeSettings}>Lưu thay đổi</button>
-                        </div>
-                        <div className="time-setup-grid">
-                            <div className="card">
-                                <h3>Thời gian vào lớp</h3>
-                                <p className="card-description">Cài đặt thời gian bắt đầu buổi học để hệ thống ghi nhận các trường hợp đi muộn.</p>
-                                <div className="form-group">
-                                    <label htmlFor="am-entry-time">Buổi Sáng</label>
-                                    <input 
-                                        type="time" 
-                                        id="am-entry-time"
-                                        value={classTimes.am}
-                                        onChange={(e) => handleClassTimeChange('am', e.target.value)}
-                                    />
-                                </div>
-                                <div className="form-group">
-                                    <label htmlFor="pm-entry-time">Buổi Chiều</label>
-                                    <input 
-                                        type="time" 
-                                        id="pm-entry-time"
-                                        value={classTimes.pm}
-                                        onChange={(e) => handleClassTimeChange('pm', e.target.value)}
-                                    />
-                                </div>
-                            </div>
-                            <div className="card large-card">
-                                <h3>Thời gian các tiết học</h3>
-                                <p className="card-description">Khai báo thời gian bắt đầu và kết thúc cho từng tiết học.</p>
-                                <div className="periods-grid">
-                                    <div className="session-periods am">
-                                        <h4>Buổi Sáng</h4>
-                                        {lessonPeriods.am.map((period, index) => (
-                                            <div className="period-row" key={`am-${index}`}>
-                                                <label>Tiết {index + 1}</label>
-                                                <div className="period-inputs">
-                                                    <input 
-                                                        type="time" 
-                                                        value={period.start}
-                                                        onChange={(e) => handlePeriodChange('am', index, 'start', e.target.value)}
-                                                    />
-                                                    <span>-</span>
-                                                    <input 
-                                                        type="time" 
-                                                        value={period.end}
-                                                        onChange={(e) => handlePeriodChange('am', index, 'end', e.target.value)}
-                                                    />
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="session-periods pm">
-                                        <h4>Buổi Chiều</h4>
-                                        {lessonPeriods.pm.map((period, index) => (
-                                            <div className="period-row" key={`pm-${index}`}>
-                                                <label>Tiết {index + 1}</label>
-                                                <div className="period-inputs">
-                                                    <input 
-                                                        type="time" 
-                                                        value={period.start}
-                                                        onChange={(e) => handlePeriodChange('pm', index, 'start', e.target.value)}
-                                                    />
-                                                    <span>-</span>
-                                                    <input 
-                                                        type="time" 
-                                                        value={period.end}
-                                                        onChange={(e) => handlePeriodChange('pm', index, 'end', e.target.value)}
-                                                    />
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                );
-            }
             default: return null;
         }
     }
@@ -3446,7 +3524,7 @@ const PrincipalView = ({ onBack, onOpenWorkflow, onOpenTestCases }: { onBack: ()
             <div className="dashboard-layout">
                 <nav className="sidebar">
                     {Object.entries(menu).map(([key, {label, icon}]) => (
-                        <button key={key} onClick={() => setActiveTab(key)} className={`sidebar-item ${activeTab === key ? 'active' : ''}`}>
+                        <button key={key} onClick={() => handleTabChange(key)} className={`sidebar-item ${activeTab === key ? 'active' : ''}`}>
                             {icon} <span>{label}</span>
                         </button>
                     ))}
@@ -3536,6 +3614,15 @@ function App() {
   const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
   const [isTestCaseModalOpen, setIsTestCaseModalOpen] = useState(false);
 
+  const [attendanceConfig, setAttendanceConfig] = useState<AttendanceConfig>({
+      morningStartTime: '07:30',
+      afternoonStartTime: '13:30',
+      customTimes: [],
+      entryMethod: 'session',
+      leaveCalculation: 'per-session',
+      isConfigured: false,
+  });
+
   const handleRoleSelect = (role: Role) => {
     setView(role);
   };
@@ -3549,15 +3636,15 @@ function App() {
   const renderContent = () => {
     switch (view) {
       case 'teacher':
-        return <TeacherView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} />;
+        return <TeacherView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} attendanceConfig={attendanceConfig} />;
       case 'parent':
-        return <ParentView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} />;
+        return <ParentView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} attendanceConfig={attendanceConfig} />;
       case 'student':
-        return <StudentView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} />;
+        return <StudentView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} attendanceConfig={attendanceConfig} />;
       case 'head_teacher':
         return <HeadTeacherView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} />;
       case 'principal':
-        return <PrincipalView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} />;
+        return <PrincipalView onBack={handleBackToRoleSelection} onOpenWorkflow={() => setIsWorkflowModalOpen(true)} onOpenTestCases={openTestCases} attendanceConfig={attendanceConfig} setAttendanceConfig={setAttendanceConfig} />;
       case 'role-selection':
         return (
           <div className="role-selection-container">
@@ -3608,6 +3695,9 @@ function App() {
 
   return (
     <>
+      <a href="https://x.com/ammaar" target="_blank" rel="noreferrer" className="creator-credit">
+        created by @ammaar
+      </a>
       <div className="immersive-app">
         <DottedGlowBackground 
           gap={24} 

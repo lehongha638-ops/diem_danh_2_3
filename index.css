@@ -3,14 +3,14 @@
 @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap');
 
 :root {
-    --app-bg: #f8f9fa;
-    --content-bg: #f1f3f5;
+    --app-bg: #f8fafc;
+    --content-bg: #f1f5f9;
     --card-bg: #ffffff;
-    --text-primary: #212529;
-    --text-secondary: #6c757d;
-    --accent-primary: #0d6efd;
-    --accent-primary-hover: #0b5ed7;
-    --border-color: #dee2e6;
+    --text-primary: #1e293b;
+    --text-secondary: #475569;
+    --accent-primary: #2563eb;
+    --accent-primary-hover: #1d4ed8;
+    --border-color: #e2e8f0;
     --glass-border: rgba(0, 0, 0, 0.1);
 
     --status-present: #198754;
@@ -353,6 +353,7 @@ html, body {
     font-size: 1.75rem;
     font-weight: 700;
     margin: 0 0 24px 0;
+    color: #1e3a8a;
 }
 
 .content-grid {
@@ -364,6 +365,7 @@ html, body {
 .card {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
+    border-top: 4px solid #3b82f6;
     border-radius: 12px;
     padding: 24px;
 }
@@ -536,17 +538,17 @@ html, body {
 
 .leave-form { display: flex; flex-direction: column; gap: 16px; }
 .form-group { display: flex; flex-direction: column; gap: 8px; }
-.form-group label { font-weight: 500; color: var(--text-secondary); }
-.form-group input, .form-group textarea, .form-group input[type="time"] {
+.form-group label { font-weight: 500; color: #1e40af; }
+.form-group input, .form-group textarea, .form-group input[type="time"], .form-group select {
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid #bfdbfe;
     border-radius: 8px;
     padding: 12px;
     color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 1rem;
 }
-.form-group input:focus, .form-group textarea:focus, .form-group input[type="time"]:focus {
+.form-group input:focus, .form-group textarea:focus, .form-group input[type="time"]:focus, .form-group select:focus {
     outline: none;
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 20%, transparent);
@@ -2585,13 +2587,18 @@ html, body {
     margin-bottom: 20px;
 }
 
-.filter-input {
+.filter-input, .filter-select {
     padding: 8px 12px;
-    border: 1px solid var(--border-color);
+    border: 1px solid #bfdbfe;
     border-radius: 6px;
     font-size: 0.9rem;
     color: var(--text-primary);
     background-color: var(--card-bg);
+}
+.filter-input:focus, .filter-select:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 20%, transparent);
 }
 
 .scrollable-list {
@@ -3073,6 +3080,11 @@ html, body {
     flex-grow: 1;
     min-height: 0;
 }
+
+.report-main-grid.single-column {
+    grid-template-columns: 1fr;
+}
+
 
 .report-main-grid > .card {
     display: flex;
